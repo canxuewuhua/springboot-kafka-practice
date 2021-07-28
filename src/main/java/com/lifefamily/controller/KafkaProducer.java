@@ -1,5 +1,6 @@
 package com.lifefamily.controller;
 
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.support.SendResult;
@@ -7,9 +8,21 @@ import org.springframework.util.concurrent.ListenableFutureCallback;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RestController;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.LinkedBlockingDeque;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import com.google.common.util.concurrent.ThreadFactoryBuilder;
 
 @RestController
+@Slf4j
 public class KafkaProducer {
+
+    ThreadFactory threadFactory = new ThreadFactoryBuilder().setNameFormat("thread-%d").build();
+    ThreadPoolExecutor threadPoolExecutor = new ThreadPoolExecutor(20,20,0L, TimeUnit.MILLISECONDS, new LinkedBlockingDeque<>(1024), threadFactory);
 
     @Autowired
     private KafkaTemplate<String, Object> kafkaTemplate;
@@ -69,6 +82,44 @@ public class KafkaProducer {
         // 不声明事务：后面报错但前面消息已经发送成功了
         kafkaTemplate.send("topic1", "test executeInTransaction");
         throw new RuntimeException("fail");
+    }
+
+    @GetMapping("/kafka/sendMsg")
+    public void sendMsg(){
+        List<String> userIds = new ArrayList<>();
+        for (int i=0;i<500;i++){
+            String userId = UUID.randomUUID().toString();
+            log.info("Kafka的sendMsg生成的第：{}个userId{}", i, userId);
+            userIds.add(userId+"-"+i);
+        }
+        threadPoolExecutor.execute(new Runnable() {
+            @Override
+            public void run() {
+                for (String  mess : userIds) {
+                    exec(mess);
+                }
+            }
+        });
+    }
+
+    private void exec(String mess) {
+        try {
+            Thread.sleep(1000);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+        kafkaTemplate.send("kafka20210729test", mess).addCallback(new ListenableFutureCallback<SendResult<String, Object>>() {
+            @Override
+            public void onFailure(Throwable ex) {
+                System.out.println("发送消息失败："+ex.getMessage());
+            }
+
+            @Override
+            public void onSuccess(SendResult<String, Object> result) {
+                System.out.println("发送消息成功：" + result.getRecordMetadata().topic() + "-"
+                        + result.getRecordMetadata().partition() + "-" + result.getRecordMetadata().offset());
+            }
+        });
     }
 
 }
